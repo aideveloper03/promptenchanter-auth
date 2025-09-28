@@ -16,11 +16,12 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
-from app.db.database import database
+from app.db.enhanced_database import enhanced_database
+from app.cache.redis_manager import redis_manager
 from app.security.auth import get_password_hash
 from app.api import auth, admin, staff
 from app.utils.tasks import start_scheduler, stop_scheduler, health_check, rate_limiter
-from app.middleware.auth_middleware import verify_api_key_middleware
+from app.middleware.performance_middleware import PerformanceMiddleware
 
 # Rate limiter
 limiter = Limiter(key_func=get_remote_address)
@@ -29,18 +30,22 @@ limiter = Limiter(key_func=get_remote_address)
 async def lifespan(app: FastAPI):
     """Application lifespan events"""
     # Startup
-    print("Starting User Management API...")
+    print("Starting Enhanced User Management API...")
     
-    # Initialize database
-    await database.connect()
-    await database.init_db()
+    # Initialize Redis cache
+    await redis_manager.connect()
+    redis_status = "enabled" if redis_manager.is_available() else "disabled (fallback to memory)"
+    print(f"Redis cache: {redis_status}")
+    
+    # Initialize enhanced database
+    await enhanced_database.connect()
     
     # Create default admin if it doesn't exist
     try:
-        admin_exists = await database.get_admin_by_username(settings.ADMIN_USERNAME)
+        admin_exists = await enhanced_database.get_admin_by_username(settings.ADMIN_USERNAME)
         if not admin_exists:
             admin_password_hash = get_password_hash(settings.ADMIN_PASSWORD)
-            await database.create_admin(settings.ADMIN_USERNAME, admin_password_hash)
+            await enhanced_database.create_admin(settings.ADMIN_USERNAME, admin_password_hash)
             print(f"Created default admin user: {settings.ADMIN_USERNAME}")
     except Exception as e:
         print(f"Warning: Could not create default admin: {str(e)}")
@@ -48,17 +53,20 @@ async def lifespan(app: FastAPI):
     # Start background scheduler
     start_scheduler()
     
-    print("User Management API started successfully!")
+    print("Enhanced User Management API started successfully!")
     print(f"Admin username: {settings.ADMIN_USERNAME}")
     print(f"IP Whitelisting: {'Enabled' if settings.ENABLE_IP_WHITELIST else 'Disabled'}")
+    print(f"Performance optimizations: Enabled")
+    print(f"Database connection pooling: Enabled")
     
     yield
     
     # Shutdown
-    print("Shutting down User Management API...")
+    print("Shutting down Enhanced User Management API...")
     stop_scheduler()
-    await database.disconnect()
-    print("User Management API shutdown complete.")
+    await enhanced_database.disconnect()
+    await redis_manager.disconnect()
+    print("Enhanced User Management API shutdown complete.")
 
 # Create FastAPI app
 app = FastAPI(
@@ -122,6 +130,13 @@ if not settings.DEBUG:
         allowed_hosts=["localhost", "127.0.0.1", "*.yourdomain.com"]
     )
 
+# Add performance middleware
+app.add_middleware(
+    PerformanceMiddleware,
+    enable_caching=True,
+    enable_rate_limiting=True
+)
+
 # Add rate limiting
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
@@ -162,11 +177,36 @@ app.include_router(auth.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(staff.router, prefix="/api/v1")
 
-# Health check endpoint
+# Enhanced health check endpoint
 @app.get("/health", tags=["Health"])
 async def get_health():
-    """Get system health status"""
-    return await health_check()
+    """Get comprehensive system health status"""
+    base_health = await health_check()
+    
+    # Add Redis health
+    redis_health = await redis_manager.health_check()
+    
+    # Add database health
+    try:
+        async with enhanced_database.get_connection() as conn:
+            await conn.execute("SELECT 1")
+        db_health = "healthy"
+    except Exception as e:
+        db_health = f"error: {str(e)}"
+    
+    # Add performance metrics
+    from app.middleware.performance_middleware import connection_manager
+    perf_stats = connection_manager.get_stats()
+    
+    return {
+        **base_health,
+        "database_enhanced": db_health,
+        "redis": redis_health,
+        "performance": {
+            "active_operations": perf_stats['active_operations'],
+            "available_connection_slots": perf_stats['available_slots']
+        }
+    }
 
 # Root endpoint
 @app.get("/", tags=["Root"])
@@ -240,6 +280,17 @@ async def api_info(request: Request):
             "default": f"{settings.RATE_LIMIT_PER_MINUTE} requests per minute",
             "conversation_limits": "Per-user limits that reset daily"
         }
+    }
+
+# API Statistics endpoint (admin only)
+@app.get("/api/v1/stats", tags=["Statistics"])
+async def get_api_statistics():
+    """Get API usage statistics (requires admin token)"""
+    stats = await enhanced_database.get_usage_stats(days=7)
+    return {
+        "usage_statistics": stats,
+        "cache_status": redis_manager.is_available(),
+        "performance_mode": "enhanced"
     }
 
 # Error handlers
