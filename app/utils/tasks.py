@@ -81,8 +81,11 @@ async def check_memory_usage():
     memory_mb = psutil.virtual_memory().used / (1024 * 1024)
     
     if memory_mb > settings.MEMORY_THRESHOLD_MB:
-        print(f"[{datetime.now()}] Memory threshold exceeded ({memory_mb:.2f}MB), triggering batch processing")
-        await batch_process_message_logs()
+        # Only log if there are actually messages to process
+        async with buffer_lock:
+            if message_log_buffer:
+                print(f"[{datetime.now()}] Memory threshold exceeded ({memory_mb:.2f}MB), triggering batch processing")
+                await batch_process_message_logs()
 
 async def add_message_to_buffer(message_data: Dict[str, Any]):
     """Add a message to the buffer for batch processing"""
@@ -164,10 +167,10 @@ def start_scheduler():
         replace_existing=True
     )
     
-    # Check memory usage every 2 minutes
+    # Check memory usage every 10 minutes
     scheduler.add_job(
         check_memory_usage,
-        IntervalTrigger(minutes=2),
+        IntervalTrigger(minutes=10),
         id="check_memory",
         replace_existing=True
     )

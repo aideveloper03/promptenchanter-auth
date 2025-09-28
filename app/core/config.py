@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     
     # Admin Settings
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "admin123!"
+    ADMIN_PASSWORD: str = "Admin123!"
     
     # IP Whitelisting
     ENABLE_IP_WHITELIST: bool = False
@@ -34,7 +34,10 @@ class Settings(BaseSettings):
     
     # Message Logging
     BATCH_LOG_INTERVAL_MINUTES: int = 10
-    MEMORY_THRESHOLD_MB: int = 100
+    MEMORY_THRESHOLD_MB: int = 1024
+    
+    # Redis Settings
+    REDIS_URL: str = "redis://redis:6379/0"
     
     # Application Settings
     APP_NAME: str = "User Management API"
