@@ -2,18 +2,23 @@
 
 ## Summary of Issues and Fixes Applied
 
-### 1. ✅ bcrypt Version Reading Error
+### 1. ✅ bcrypt Version Reading Error (ROOT CAUSE FIXED)
 **Issue**: `AttributeError: module 'bcrypt' has no attribute '__about__'`
+**Root Cause**: Incompatible versions of bcrypt and passlib libraries
 **Fix**: 
-- Updated `requirements.txt` to pin compatible bcrypt and passlib versions
-- Added fallback configuration in `auth.py` for bcrypt compatibility issues
+- Updated `requirements.txt` to use compatible bcrypt (>=4.1.0) and passlib (>=1.7.4) versions
+- Removed fallback hacks and implemented proper CryptContext configuration
+- Fixed the library compatibility issue at its source
 
-### 2. ✅ Admin Password Length Error
+### 2. ✅ Admin Password Length Error (ROOT CAUSE FIXED)
 **Issue**: `password cannot be longer than 72 bytes, truncate manually if necessary`
+**Root Cause**: bcrypt has a 72-byte password limit, and truncation is unsafe
 **Fix**: 
-- Modified `get_password_hash()` and `verify_password()` functions to automatically truncate passwords to 72 bytes
-- Updated default admin password to be shorter and more reasonable
-- Changed from `admin123!` to `Admin123!`
+- Implemented proper pre-hashing with SHA-256 for passwords > 72 bytes
+- Uses base64 encoding to ensure consistent bcrypt input
+- Maintains security while supporting passwords of any length
+- Updated default admin password to be more secure
+- Added password analysis utilities for transparency
 
 ### 3. ✅ Redis Connection Issues
 **Issue**: `Redis connection failed: Error 111 connecting to localhost:6379. Connection refused.`
@@ -40,8 +45,8 @@
 
 ## Files Modified
 
-1. **requirements.txt** - Fixed bcrypt version compatibility
-2. **app/security/auth.py** - Added password truncation and bcrypt fallback
+1. **requirements.txt** - Fixed bcrypt and passlib version compatibility (ROOT CAUSE)
+2. **app/security/auth.py** - Implemented proper pre-hashing for long passwords (ROOT CAUSE)
 3. **app/core/config.py** - Added REDIS_URL, updated memory threshold and admin password
 4. **app/cache/redis_manager.py** - Fixed Redis URL handling and missing import
 5. **app/utils/tasks.py** - Improved memory check logging and frequency

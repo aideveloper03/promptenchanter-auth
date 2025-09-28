@@ -10,16 +10,12 @@ import hashlib
 
 from ..core.config import settings
 
-# Password hashing with fallback configuration
-try:
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
-except Exception:
-    # Fallback configuration for bcrypt compatibility issues
-    pwd_context = CryptContext(
-        schemes=["bcrypt"], 
-        deprecated="auto",
-        bcrypt__default_rounds=12
-    )
+# Password hashing context with proper configuration
+pwd_context = CryptContext(
+    schemes=["bcrypt"],
+    deprecated="auto",
+    bcrypt__rounds=settings.BCRYPT_ROUNDS
+)
 
 # Encryption setup
 def get_encryption_key() -> bytes:
@@ -31,19 +27,31 @@ def get_encryption_key() -> bytes:
 
 fernet = Fernet(get_encryption_key())
 
+def _prepare_password_for_bcrypt(password: str) -> str:
+    """
+    Prepare password for bcrypt hashing.
+    For passwords > 72 bytes, pre-hash with SHA-256 to avoid truncation.
+    """
+    password_bytes = password.encode('utf-8')
+    
+    # If password is within bcrypt's limit, use it directly
+    if len(password_bytes) <= 72:
+        return password
+    
+    # For longer passwords, pre-hash with SHA-256 and encode as base64
+    # This ensures consistent input to bcrypt regardless of password length
+    sha256_hash = hashlib.sha256(password_bytes).digest()
+    return base64.b64encode(sha256_hash).decode('ascii')
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify a password against its hash"""
-    # Truncate password to 72 bytes for bcrypt compatibility
-    if len(plain_password.encode('utf-8')) > 72:
-        plain_password = plain_password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
-    return pwd_context.verify(plain_password, hashed_password)
+    prepared_password = _prepare_password_for_bcrypt(plain_password)
+    return pwd_context.verify(prepared_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    """Hash a password"""
-    # Truncate password to 72 bytes for bcrypt compatibility
-    if len(password.encode('utf-8')) > 72:
-        password = password.encode('utf-8')[:72].decode('utf-8', errors='ignore')
-    return pwd_context.hash(password)
+    """Hash a password using bcrypt with proper handling of long passwords"""
+    prepared_password = _prepare_password_for_bcrypt(password)
+    return pwd_context.hash(prepared_password)
 
 def generate_api_key() -> str:
     """Generate a unique API key"""
@@ -112,6 +120,12 @@ class SecurityValidator:
         if len(password) < 8:
             return False, "Password must be at least 8 characters long"
         
+        # Check byte length for bcrypt compatibility info
+        password_bytes = len(password.encode('utf-8'))
+        if password_bytes > 72:
+            # This is informational - our system handles it properly with pre-hashing
+            pass  # We handle this transparently
+        
         if not any(c.isdigit() for c in password):
             return False, "Password must contain at least 1 number"
         
@@ -122,6 +136,18 @@ class SecurityValidator:
             return False, "Password should contain at least 1 lowercase letter"
         
         return True, "Password is strong"
+    
+    @staticmethod
+    def get_password_info(password: str) -> Dict[str, Any]:
+        """Get information about password characteristics"""
+        password_bytes = len(password.encode('utf-8'))
+        return {
+            "length_chars": len(password),
+            "length_bytes": password_bytes,
+            "uses_prehashing": password_bytes > 72,
+            "bcrypt_compatible": True,  # Always true with our implementation
+            "strength_check": SecurityValidator.is_strong_password(password)
+        }
     
     @staticmethod
     def sanitize_input(data: str, max_length: int = 1000) -> str:
