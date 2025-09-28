@@ -59,18 +59,7 @@ USER appuser
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-    CMD python -c "
-import requests
-import sys
-try:
-    response = requests.get('http://localhost:8000/health', timeout=10)
-    if response.status_code == 200:
-        sys.exit(0)
-    else:
-        sys.exit(1)
-except:
-    sys.exit(1)
-" || exit 1
+    CMD python -c "import urllib.request; import sys; urllib.request.urlopen('http://localhost:8000/health', timeout=10); sys.exit(0)" || exit 1
 
 # Expose port
 EXPOSE 8000
