@@ -12,7 +12,7 @@ class RedisManager:
     """Redis cache and session manager with fallback support"""
     
     def __init__(self, redis_url: str = None):
-        self.redis_url = redis_url or getattr(settings, 'REDIS_URL', 'redis://localhost:6379/0')
+        self.redis_url = redis_url or settings.REDIS_URL
         self._redis = None
         self._available = False
         
@@ -203,7 +203,8 @@ class RedisManager:
         try:
             if self._available and self._redis:
                 # Use Redis sliding window
-                current_time = import_time()
+                import time
+                current_time = time.time()
                 pipeline = self._redis.pipeline()
                 
                 # Remove old entries

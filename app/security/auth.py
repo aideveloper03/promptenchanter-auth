@@ -10,8 +10,17 @@ import hashlib
 
 from ..core.config import settings
 
-# Password hashing
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+# Password hashing context with modern Argon2 as primary and bcrypt as fallback
+pwd_context = CryptContext(
+    schemes=["argon2", "bcrypt"],
+    deprecated="auto",
+    # Argon2 configuration (primary)
+    argon2__memory_cost=65536,  # 64 MB
+    argon2__time_cost=3,        # 3 iterations
+    argon2__parallelism=4,      # 4 parallel threads
+    # bcrypt configuration (fallback/compatibility)
+    bcrypt__rounds=settings.BCRYPT_ROUNDS
+)
 
 # Encryption setup
 def get_encryption_key() -> bytes:
@@ -23,12 +32,37 @@ def get_encryption_key() -> bytes:
 
 fernet = Fernet(get_encryption_key())
 
+def _prepare_password_for_hashing(password: str, target_scheme: str = None) -> str:
+    """
+    Prepare password for hashing based on the target scheme.
+    Argon2 handles long passwords natively, bcrypt needs pre-hashing for >72 bytes.
+    """
+    password_bytes = password.encode('utf-8')
+    
+    # Argon2 handles any length password natively
+    if target_scheme == "argon2" or len(password_bytes) <= 72:
+        return password
+    
+    # For bcrypt with long passwords, pre-hash with SHA-256
+    sha256_hash = hashlib.sha256(password_bytes).digest()
+    return base64.b64encode(sha256_hash).decode('ascii')
+
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
-    return pwd_context.verify(plain_password, hashed_password)
+    """Verify a password against its hash (supports both Argon2 and bcrypt)"""
+    # passlib automatically detects the scheme from the hash
+    # For bcrypt hashes, we need to prepare the password the same way
+    if hashed_password.startswith('$2b$') or hashed_password.startswith('$2a$'):
+        # This is a bcrypt hash, prepare password for bcrypt
+        prepared_password = _prepare_password_for_hashing(plain_password, "bcrypt")
+        return pwd_context.verify(prepared_password, hashed_password)
+    else:
+        # This is likely Argon2 or another scheme, use password directly
+        return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    """Hash a password"""
+    """Hash a password using modern Argon2 (with bcrypt fallback support)"""
+    # passlib will use the first scheme (argon2) by default
+    # Argon2 handles long passwords natively, no preparation needed
     return pwd_context.hash(password)
 
 def generate_api_key() -> str:
@@ -98,6 +132,12 @@ class SecurityValidator:
         if len(password) < 8:
             return False, "Password must be at least 8 characters long"
         
+        # Check byte length for bcrypt compatibility info
+        password_bytes = len(password.encode('utf-8'))
+        if password_bytes > 72:
+            # This is informational - our system handles it properly with pre-hashing
+            pass  # We handle this transparently
+        
         if not any(c.isdigit() for c in password):
             return False, "Password must contain at least 1 number"
         
@@ -108,6 +148,20 @@ class SecurityValidator:
             return False, "Password should contain at least 1 lowercase letter"
         
         return True, "Password is strong"
+    
+    @staticmethod
+    def get_password_info(password: str) -> Dict[str, Any]:
+        """Get information about password characteristics"""
+        password_bytes = len(password.encode('utf-8'))
+        return {
+            "length_chars": len(password),
+            "length_bytes": password_bytes,
+            "primary_scheme": "argon2",  # Modern default
+            "supports_long_passwords": True,  # Argon2 has no length limits
+            "bcrypt_fallback_available": True,
+            "uses_prehashing_for_bcrypt": password_bytes > 72,
+            "strength_check": SecurityValidator.is_strong_password(password)
+        }
     
     @staticmethod
     def sanitize_input(data: str, max_length: int = 1000) -> str:
