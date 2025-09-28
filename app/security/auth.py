@@ -10,10 +10,15 @@ import hashlib
 
 from ..core.config import settings
 
-# Password hashing context with proper configuration
+# Password hashing context with modern Argon2 as primary and bcrypt as fallback
 pwd_context = CryptContext(
-    schemes=["bcrypt"],
+    schemes=["argon2", "bcrypt"],
     deprecated="auto",
+    # Argon2 configuration (primary)
+    argon2__memory_cost=65536,  # 64 MB
+    argon2__time_cost=3,        # 3 iterations
+    argon2__parallelism=4,      # 4 parallel threads
+    # bcrypt configuration (fallback/compatibility)
     bcrypt__rounds=settings.BCRYPT_ROUNDS
 )
 
@@ -27,31 +32,38 @@ def get_encryption_key() -> bytes:
 
 fernet = Fernet(get_encryption_key())
 
-def _prepare_password_for_bcrypt(password: str) -> str:
+def _prepare_password_for_hashing(password: str, target_scheme: str = None) -> str:
     """
-    Prepare password for bcrypt hashing.
-    For passwords > 72 bytes, pre-hash with SHA-256 to avoid truncation.
+    Prepare password for hashing based on the target scheme.
+    Argon2 handles long passwords natively, bcrypt needs pre-hashing for >72 bytes.
     """
     password_bytes = password.encode('utf-8')
     
-    # If password is within bcrypt's limit, use it directly
-    if len(password_bytes) <= 72:
+    # Argon2 handles any length password natively
+    if target_scheme == "argon2" or len(password_bytes) <= 72:
         return password
     
-    # For longer passwords, pre-hash with SHA-256 and encode as base64
-    # This ensures consistent input to bcrypt regardless of password length
+    # For bcrypt with long passwords, pre-hash with SHA-256
     sha256_hash = hashlib.sha256(password_bytes).digest()
     return base64.b64encode(sha256_hash).decode('ascii')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify a password against its hash"""
-    prepared_password = _prepare_password_for_bcrypt(plain_password)
-    return pwd_context.verify(prepared_password, hashed_password)
+    """Verify a password against its hash (supports both Argon2 and bcrypt)"""
+    # passlib automatically detects the scheme from the hash
+    # For bcrypt hashes, we need to prepare the password the same way
+    if hashed_password.startswith('$2b$') or hashed_password.startswith('$2a$'):
+        # This is a bcrypt hash, prepare password for bcrypt
+        prepared_password = _prepare_password_for_hashing(plain_password, "bcrypt")
+        return pwd_context.verify(prepared_password, hashed_password)
+    else:
+        # This is likely Argon2 or another scheme, use password directly
+        return pwd_context.verify(plain_password, hashed_password)
 
 def get_password_hash(password: str) -> str:
-    """Hash a password using bcrypt with proper handling of long passwords"""
-    prepared_password = _prepare_password_for_bcrypt(password)
-    return pwd_context.hash(prepared_password)
+    """Hash a password using modern Argon2 (with bcrypt fallback support)"""
+    # passlib will use the first scheme (argon2) by default
+    # Argon2 handles long passwords natively, no preparation needed
+    return pwd_context.hash(password)
 
 def generate_api_key() -> str:
     """Generate a unique API key"""
@@ -144,8 +156,10 @@ class SecurityValidator:
         return {
             "length_chars": len(password),
             "length_bytes": password_bytes,
-            "uses_prehashing": password_bytes > 72,
-            "bcrypt_compatible": True,  # Always true with our implementation
+            "primary_scheme": "argon2",  # Modern default
+            "supports_long_passwords": True,  # Argon2 has no length limits
+            "bcrypt_fallback_available": True,
+            "uses_prehashing_for_bcrypt": password_bytes > 72,
             "strength_check": SecurityValidator.is_strong_password(password)
         }
     
