@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional, Dict, Any
 import json
 
-from ..db.database import database
+from ..db.enhanced_database import enhanced_database as database
 from ..security.auth import verify_token, validate_ip_address
 from ..core.config import settings
 
@@ -143,6 +143,18 @@ async def verify_api_key(
         )
     
     api_key = credentials.credentials
+    
+    # Try to decrypt the API key if it's encrypted
+    try:
+        from ..security.auth import decrypt_data
+        decrypted_key = decrypt_data(api_key)
+        # Validate the decrypted key format
+        from ..security.auth import SecurityValidator
+        if SecurityValidator.validate_api_key_format(decrypted_key):
+            api_key = decrypted_key
+    except:
+        # If decryption fails, try using the key as-is (for raw keys)
+        pass
     
     # Get user by API key
     user = await database.get_user_by_key(api_key)
