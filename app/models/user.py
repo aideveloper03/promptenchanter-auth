@@ -58,6 +58,7 @@ class UserResponse(BaseModel):
     access_rtype: List[str]
     level: str
     additional_notes: str
+    email_verified: bool = False
 
 class UserInDB(BaseModel):
     id: Optional[int] = None

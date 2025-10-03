@@ -3,7 +3,7 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional, Dict, Any
 import json
 
-from ..db.enhanced_database import enhanced_database as database
+from ..db.mongodb_database import mongodb_database as database
 from ..security.auth import verify_token, validate_ip_address
 from ..core.config import settings
 
@@ -166,7 +166,7 @@ async def verify_api_key(
         )
     
     # Check conversation limits
-    limits = json.loads(user['limits'])
+    limits = user['limits'] if isinstance(user['limits'], dict) else json.loads(user['limits'])
     if limits.get('conversation_limit', 0) <= 0:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
