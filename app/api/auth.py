@@ -6,7 +6,8 @@ from typing import Dict, Any
 
 from ..models.user import UserCreate, UserLogin, UserResponse, KeyResponse, PasswordReset, EmailUpdate
 from ..models.message import MessageLogCreate, MessageLogRequest
-from ..db.enhanced_database import enhanced_database as database
+from ..db.mongodb_database import mongodb_database as database
+from ..services.email_service import email_service
 from ..security.auth import (
     verify_password, get_password_hash, create_access_token, 
     generate_api_key, encrypt_data, decrypt_data, SecurityValidator
@@ -89,11 +90,48 @@ async def register_user(user: UserCreate, request: Request):
         # Create user
         user_id = await database.create_user(user_data)
         if user_id:
-            return {
+            response_data = {
                 "message": "User registered successfully",
                 "user_id": str(user_id),
                 "username": user.username
             }
+            
+            # Send verification email if email verification is enabled
+            if settings.ENABLE_EMAIL_VERIFICATION and email_service.is_configured():
+                try:
+                    from datetime import datetime, timedelta
+                    
+                    # Generate OTP
+                    otp = email_service.generate_otp()
+                    
+                    # Set expiration time
+                    expires_at = datetime.utcnow() + timedelta(minutes=settings.EMAIL_VERIFICATION_EXPIRE_MINUTES)
+                    
+                    # Save verification record
+                    verification_id = await database.create_email_verification(
+                        user.email, 
+                        otp, 
+                        expires_at
+                    )
+                    
+                    if verification_id:
+                        # Send email
+                        email_sent = await email_service.send_verification_email(
+                            user.email, 
+                            otp, 
+                            user.username
+                        )
+                        
+                        if email_sent:
+                            response_data["message"] += ". Verification email sent."
+                        else:
+                            response_data["message"] += ". Failed to send verification email."
+                    
+                except Exception as e:
+                    print(f"Error sending verification email during registration: {str(e)}")
+                    response_data["message"] += ". Registration successful but failed to send verification email."
+            
+            return response_data
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -163,11 +201,12 @@ async def get_user_profile(current_user: Dict[str, Any] = Depends(get_current_us
             type=current_user['type'],
             time_created=current_user['time_created'],
             subscription_plan=current_user['subscription_plan'],
-            credits=json.loads(current_user['credits']),
-            limits=json.loads(current_user['limits']),
-            access_rtype=json.loads(current_user['access_rtype']),
+            credits=current_user['credits'] if isinstance(current_user['credits'], dict) else json.loads(current_user['credits']),
+            limits=current_user['limits'] if isinstance(current_user['limits'], dict) else json.loads(current_user['limits']),
+            access_rtype=current_user['access_rtype'] if isinstance(current_user['access_rtype'], list) else json.loads(current_user['access_rtype']),
             level=current_user['level'],
-            additional_notes=current_user['additional_notes']
+            additional_notes=current_user['additional_notes'],
+            email_verified=current_user.get('email_verified', False)
         )
     except Exception as e:
         raise HTTPException(
@@ -177,13 +216,21 @@ async def get_user_profile(current_user: Dict[str, Any] = Depends(get_current_us
 
 @router.get("/api-key", response_model=KeyResponse)
 async def get_api_key(current_user: Dict[str, Any] = Depends(get_current_user)):
-    """Get user's encrypted API key"""
+    """Get user's API key"""
     try:
-        encrypted_key = encrypt_data(current_user['key'])
+        # Check if email verification is required and user is not verified
+        if settings.ENABLE_EMAIL_VERIFICATION and not current_user.get('email_verified', False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Email verification required to access API key. Please verify your email first."
+            )
+        
         return KeyResponse(
-            key=encrypted_key,
+            key=current_user['key'],
             created_at=current_user['time_created']
         )
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -194,6 +241,13 @@ async def get_api_key(current_user: Dict[str, Any] = Depends(get_current_user)):
 async def regenerate_api_key(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Regenerate user's API key"""
     try:
+        # Check if email verification is required and user is not verified
+        if settings.ENABLE_EMAIL_VERIFICATION and not current_user.get('email_verified', False):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Email verification required to regenerate API key. Please verify your email first."
+            )
+        
         # Generate new unique API key
         new_api_key = generate_api_key()
         
@@ -209,9 +263,8 @@ async def regenerate_api_key(current_user: Dict[str, Any] = Depends(get_current_
                 detail="Failed to update API key"
             )
         
-        encrypted_key = encrypt_data(new_api_key)
         return KeyResponse(
-            key=encrypted_key,
+            key=new_api_key,
             created_at=current_user['time_created']
         )
     except HTTPException:
@@ -339,11 +392,21 @@ async def verify_api_key_endpoint(
     current_user: Dict[str, Any] = Depends(verify_api_key)
 ):
     """Verify API key and deduct conversation limit (for middleware use)"""
+    # Check if email verification is required and user is not verified
+    if settings.ENABLE_EMAIL_VERIFICATION and not current_user.get('email_verified', False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Email verification required to use API key. Please verify your email first."
+        )
+    
+    limits = current_user['limits'] if isinstance(current_user['limits'], dict) else json.loads(current_user['limits'])
+    
     return {
         "valid": True,
         "username": current_user['username'],
         "email": current_user['email'],
-        "remaining_conversations": json.loads(current_user['limits']).get('conversation_limit', 0)
+        "email_verified": current_user.get('email_verified', False),
+        "remaining_conversations": limits.get('conversation_limit', 0)
     }
 
 # Message logging endpoint

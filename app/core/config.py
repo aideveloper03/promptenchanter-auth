@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     
     # Database
     DATABASE_URL: str = "sqlite:///./user_management.db"
+    MONGODB_URI: str = "mongodb+srv://aideveloper03690_db_user:c0evekYI3q2EnpuY@cluster0.cptyxpt.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
     
     # Security Settings
     BCRYPT_ROUNDS: int = 12
@@ -17,9 +18,15 @@ class Settings(BaseSettings):
     
     # Email Settings (Optional)
     SMTP_HOST: Optional[str] = None
-    SMTP_PORT: Optional[int] = None
+    SMTP_PORT: Optional[int] = 587
     SMTP_USERNAME: Optional[str] = None
     SMTP_PASSWORD: Optional[str] = None
+    FROM_EMAIL: Optional[str] = None
+    
+    # Email Verification Settings
+    ENABLE_EMAIL_VERIFICATION: bool = False
+    EMAIL_VERIFICATION_EXPIRE_MINUTES: int = 15
+    MAX_VERIFICATION_ATTEMPTS_PER_DAY: int = 3
     
     # Admin Settings
     ADMIN_USERNAME: str = "admin"

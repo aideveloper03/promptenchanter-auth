@@ -16,10 +16,10 @@ from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
 
 from app.core.config import settings
-from app.db.enhanced_database import enhanced_database
+from app.db.mongodb_database import mongodb_database
 from app.cache.redis_manager import redis_manager
 from app.security.auth import get_password_hash
-from app.api import auth, admin, staff
+from app.api import auth, admin, staff, email_verification
 from app.utils.tasks import start_scheduler, stop_scheduler, health_check, rate_limiter
 from app.middleware.performance_middleware import PerformanceMiddleware
 
@@ -37,15 +37,15 @@ async def lifespan(app: FastAPI):
     redis_status = "enabled" if redis_manager.is_available() else "disabled (fallback to memory)"
     print(f"Redis cache: {redis_status}")
     
-    # Initialize enhanced database
-    await enhanced_database.connect()
+    # Initialize MongoDB database
+    await mongodb_database.connect()
     
     # Create default admin if it doesn't exist
     try:
-        admin_exists = await enhanced_database.get_admin_by_username(settings.ADMIN_USERNAME)
+        admin_exists = await mongodb_database.get_admin_by_username(settings.ADMIN_USERNAME)
         if not admin_exists:
             admin_password_hash = get_password_hash(settings.ADMIN_PASSWORD)
-            await enhanced_database.create_admin(settings.ADMIN_USERNAME, admin_password_hash)
+            await mongodb_database.create_admin(settings.ADMIN_USERNAME, admin_password_hash)
             print(f"Created default admin user: {settings.ADMIN_USERNAME}")
     except Exception as e:
         print(f"Warning: Could not create default admin: {str(e)}")
@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
     # Shutdown
     print("Shutting down Enhanced User Management API...")
     stop_scheduler()
-    await enhanced_database.disconnect()
+    await mongodb_database.disconnect()
     await redis_manager.disconnect()
     print("Enhanced User Management API shutdown complete.")
 
@@ -176,6 +176,7 @@ async def rate_limit_middleware(request: Request, call_next):
 app.include_router(auth.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(staff.router, prefix="/api/v1")
+app.include_router(email_verification.router, prefix="/api/v1")
 
 # Enhanced health check endpoint
 @app.get("/health", tags=["Health"])
@@ -188,8 +189,7 @@ async def get_health():
     
     # Add database health
     try:
-        async with enhanced_database.get_connection() as conn:
-            await conn.execute("SELECT 1")
+        await mongodb_database.client.admin.command('ping')
         db_health = "healthy"
     except Exception as e:
         db_health = f"error: {str(e)}"
@@ -286,7 +286,7 @@ async def api_info(request: Request):
 @app.get("/api/v1/stats", tags=["Statistics"])
 async def get_api_statistics():
     """Get API usage statistics (requires admin token)"""
-    stats = await enhanced_database.get_usage_stats(days=7)
+    stats = await mongodb_database.get_usage_stats(days=7)
     return {
         "usage_statistics": stats,
         "cache_status": redis_manager.is_available(),

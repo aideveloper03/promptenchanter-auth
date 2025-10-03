@@ -5,7 +5,7 @@ from typing import Dict, Any, List, Optional
 
 from ..models.admin import AdminLogin, AdminUserUpdate, StaffCreate, StaffResponse
 from ..models.user import UserResponse
-from ..db.enhanced_database import enhanced_database as database
+from ..db.mongodb_database import mongodb_database as database
 from ..security.auth import (
     verify_password, get_password_hash, create_access_token, 
     generate_api_key, SecurityValidator
@@ -117,9 +117,9 @@ async def get_user_by_username(
             type=user_data['type'],
             time_created=user_data['time_created'],
             subscription_plan=user_data['subscription_plan'],
-            credits=json.loads(user_data['credits']),
-            limits=json.loads(user_data['limits']),
-            access_rtype=json.loads(user_data['access_rtype']),
+            credits=user_data['credits'] if isinstance(user_data['credits'], dict) else json.loads(user_data['credits']),
+            limits=user_data['limits'] if isinstance(user_data['limits'], dict) else json.loads(user_data['limits']),
+            access_rtype=user_data['access_rtype'] if isinstance(user_data['access_rtype'], list) else json.loads(user_data['access_rtype']),
             level=user_data['level'],
             additional_notes=user_data['additional_notes']
         )
