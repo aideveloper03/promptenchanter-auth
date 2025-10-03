@@ -155,22 +155,21 @@ class EnhancedDatabase:
             
             # Staff table
             await conn.execute("""
-                CREATE TABLE IF NOT EXISTS staff (
+                CREATE TABLE IF NOT EXISTS support_staff (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     username TEXT UNIQUE NOT NULL,
                     email TEXT UNIQUE NOT NULL,
                     password_hash TEXT NOT NULL,
                     staff_level TEXT NOT NULL DEFAULT 'support',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_login TIMESTAMP,
+                    time_created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     is_active BOOLEAN DEFAULT 1
                 )
             """)
             
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_username ON staff(username)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_email ON staff(email)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_active ON staff(is_active)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_username ON support_staff(username)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_email ON support_staff(email)")
+            await conn.execute("CREATE INDEX IF NOT EXISTS idx_staff_active ON support_staff(is_active)")
             
             # Message logs table with partitioning-like approach
             await conn.execute("""
@@ -260,6 +259,7 @@ class EnhancedDatabase:
     async def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         """Get user by email with optimized query"""
         async with self.get_connection() as conn:
+            conn.row_factory = aiosqlite.Row
             cursor = await conn.execute("""
                 SELECT * FROM users WHERE email = ? AND is_active = 1
             """, (email,))
@@ -271,6 +271,7 @@ class EnhancedDatabase:
     async def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Get user by username with optimized query"""
         async with self.get_connection() as conn:
+            conn.row_factory = aiosqlite.Row
             cursor = await conn.execute("""
                 SELECT * FROM users WHERE username = ? AND is_active = 1
             """, (username,))
@@ -282,6 +283,7 @@ class EnhancedDatabase:
     async def get_user_by_key(self, api_key: str) -> Optional[Dict[str, Any]]:
         """Get user by API key with optimized query"""
         async with self.get_connection() as conn:
+            conn.row_factory = aiosqlite.Row
             cursor = await conn.execute("""
                 SELECT * FROM users WHERE key = ? AND is_active = 1
             """, (api_key,))
@@ -294,13 +296,58 @@ class EnhancedDatabase:
         """Update user limits with atomic operation"""
         async with self.get_connection() as conn:
             try:
-                await conn.execute("""
+                cursor = await conn.execute("""
                     UPDATE users SET limits = ? WHERE username = ? AND is_active = 1
                 """, (json.dumps(limits), username))
                 await conn.commit()
-                return conn.total_changes > 0
+                return cursor.rowcount > 0
             except Exception as e:
                 logger.error(f"Error updating user limits: {e}")
+                return False
+    
+    async def update_user_key(self, username: str, new_key: str) -> bool:
+        """Update user API key"""
+        async with self.get_connection() as conn:
+            try:
+                cursor = await conn.execute("""
+                    UPDATE users SET key = ? WHERE username = ? AND is_active = 1
+                """, (new_key, username))
+                await conn.commit()
+                return cursor.rowcount > 0
+            except Exception as e:
+                logger.error(f"Error updating user key: {e}")
+                return False
+    
+    async def update_user_profile(self, username: str, update_data: Dict[str, Any]) -> bool:
+        """Update user profile information"""
+        async with self.get_connection() as conn:
+            try:
+                # Build dynamic query
+                set_clauses = []
+                values = []
+                
+                allowed_fields = ['name', 'email', 'about_me', 'hobbies', 'type', 'subscription_plan', 
+                                'credits', 'limits', 'access_rtype', 'level', 'additional_notes', 'password_hash']
+                
+                for key, value in update_data.items():
+                    if key in allowed_fields:
+                        set_clauses.append(f"{key} = ?")
+                        if isinstance(value, (dict, list)):
+                            values.append(json.dumps(value))
+                        else:
+                            values.append(value)
+                
+                if not set_clauses:
+                    return False
+                    
+                values.append(username)
+                query = f"UPDATE users SET {', '.join(set_clauses)} WHERE username = ? AND is_active = 1"
+                
+                cursor = await conn.execute(query, values)
+                await conn.commit()
+                return cursor.rowcount > 0
+            except Exception as e:
+                logger.error(f"Error updating user profile: {e}")
                 return False
     
     async def batch_log_messages(self, messages: List[Dict[str, Any]]) -> bool:
@@ -328,6 +375,7 @@ class EnhancedDatabase:
                                  search: str = None) -> List[Dict[str, Any]]:
         """Get users with pagination and search"""
         async with self.get_connection() as conn:
+            conn.row_factory = aiosqlite.Row
             if search:
                 cursor = await conn.execute("""
                     SELECT * FROM users 
@@ -354,6 +402,7 @@ class EnhancedDatabase:
         """Reset all user conversation limits (daily task)"""
         async with self.get_connection() as conn:
             try:
+                conn.row_factory = aiosqlite.Row
                 # Get all users with their reset limits
                 cursor = await conn.execute("""
                     SELECT id, username, limits FROM users WHERE is_active = 1
@@ -363,10 +412,11 @@ class EnhancedDatabase:
                 # Prepare batch update
                 updates = []
                 for user in users:
-                    limits = json.loads(user[2])  # limits column
+                    user_dict = dict(user)
+                    limits = json.loads(user_dict['limits'])
                     if 'reset' in limits:
                         limits['conversation_limit'] = limits['reset']
-                        updates.append((json.dumps(limits), user[0]))  # user id
+                        updates.append((json.dumps(limits), user_dict['id']))
                 
                 # Batch update
                 await conn.executemany("""
@@ -402,6 +452,7 @@ class EnhancedDatabase:
     async def get_usage_stats(self, days: int = 7) -> Dict[str, Any]:
         """Get usage statistics for the last N days"""
         async with self.get_connection() as conn:
+            conn.row_factory = aiosqlite.Row
             cursor = await conn.execute("""
                 SELECT 
                     date,
@@ -460,6 +511,7 @@ class EnhancedDatabase:
     async def get_admin_by_username(self, username: str) -> Optional[Dict[str, Any]]:
         """Get admin by username"""
         async with self.get_connection() as conn:
+            conn.row_factory = aiosqlite.Row
             cursor = await conn.execute("""
                 SELECT * FROM admins WHERE username = ?
             """, (username,))
@@ -473,7 +525,7 @@ class EnhancedDatabase:
         async with self.get_connection() as conn:
             try:
                 cursor = await conn.execute("""
-                    INSERT INTO staff (name, username, email, password_hash, staff_level)
+                    INSERT INTO support_staff (name, username, email, password_hash, staff_level)
                     VALUES (?, ?, ?, ?, ?)
                 """, (
                     staff_data['name'], staff_data['username'], 
@@ -485,6 +537,18 @@ class EnhancedDatabase:
             except Exception as e:
                 logger.error(f"Error creating staff: {e}")
                 return None
+    
+    async def get_staff_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+        """Get staff by username"""
+        async with self.get_connection() as conn:
+            conn.row_factory = aiosqlite.Row
+            cursor = await conn.execute("""
+                SELECT * FROM support_staff WHERE username = ? AND is_active = 1
+            """, (username,))
+            row = await cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
     
     async def log_message(self, message_data: Dict[str, Any]) -> Optional[int]:
         """Log single message"""
@@ -508,6 +572,7 @@ class EnhancedDatabase:
         """Soft delete user with backup"""
         async with self.get_connection() as conn:
             try:
+                conn.row_factory = aiosqlite.Row
                 # Get user data first
                 cursor = await conn.execute("""
                     SELECT * FROM users WHERE username = ? AND is_active = 1
@@ -515,6 +580,7 @@ class EnhancedDatabase:
                 user = await cursor.fetchone()
                 
                 if not user:
+                    logger.error(f"User {username} not found for deletion")
                     return False
                 
                 user_dict = dict(user)
@@ -532,14 +598,24 @@ class EnhancedDatabase:
                 ))
                 
                 # Soft delete
-                await conn.execute("""
+                cursor = await conn.execute("""
                     UPDATE users SET is_active = 0 WHERE username = ?
                 """, (username,))
                 
                 await conn.commit()
-                return True
+                
+                # Check if the update was successful
+                if cursor.rowcount > 0:
+                    logger.info(f"Successfully deleted user {username}")
+                    return True
+                else:
+                    logger.error(f"Failed to update user {username} - no rows affected")
+                    return False
+                    
             except Exception as e:
-                logger.error(f"Error deleting user: {e}")
+                logger.error(f"Error deleting user {username}: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
                 return False
 
 # Create database instance

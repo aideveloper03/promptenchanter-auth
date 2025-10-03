@@ -5,7 +5,7 @@ from typing import Dict, Any, List
 
 from ..models.admin import StaffLogin, StaffUserUpdate
 from ..models.user import UserResponse
-from ..db.database import database
+from ..db.enhanced_database import enhanced_database as database
 from ..security.auth import verify_password, create_access_token, SecurityValidator
 from ..core.config import settings
 from .dependencies import get_current_staff

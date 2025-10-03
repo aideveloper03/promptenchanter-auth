@@ -5,8 +5,8 @@ import json
 from typing import Dict, Any
 
 from ..models.user import UserCreate, UserLogin, UserResponse, KeyResponse, PasswordReset, EmailUpdate
-from ..models.message import MessageLogCreate
-from ..db.database import database
+from ..models.message import MessageLogCreate, MessageLogRequest
+from ..db.enhanced_database import enhanced_database as database
 from ..security.auth import (
     verify_password, get_password_hash, create_access_token, 
     generate_api_key, encrypt_data, decrypt_data, SecurityValidator
@@ -311,17 +311,22 @@ async def reset_password(
 async def delete_account(current_user: Dict[str, Any] = Depends(get_current_user)):
     """Delete user account"""
     try:
+        print(f"Attempting to delete user: {current_user['username']}")
         success = await database.delete_user(current_user['username'], "user")
+        print(f"Delete result: {success}")
         if success:
             return {"message": "Account deleted successfully"}
         else:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to delete account"
+                detail="Failed to delete account - database operation returned False"
             )
     except HTTPException:
         raise
     except Exception as e:
+        print(f"Exception during delete: {str(e)}")
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete account: {str(e)}"
@@ -344,7 +349,7 @@ async def verify_api_key_endpoint(
 # Message logging endpoint
 @router.post("/log-message", response_model=Dict[str, str])
 async def log_message(
-    message_data: MessageLogCreate,
+    message_data: MessageLogRequest,
     request: Request,
     current_user: Dict[str, Any] = Depends(verify_api_key)
 ):

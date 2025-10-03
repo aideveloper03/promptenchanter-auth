@@ -5,7 +5,7 @@ from typing import Dict, Any, List, Optional
 
 from ..models.admin import AdminLogin, AdminUserUpdate, StaffCreate, StaffResponse
 from ..models.user import UserResponse
-from ..db.database import database
+from ..db.enhanced_database import enhanced_database as database
 from ..security.auth import (
     verify_password, get_password_hash, create_access_token, 
     generate_api_key, SecurityValidator

@@ -17,6 +17,11 @@ class MessageLogCreate(BaseModel):
     messages: List[Dict[str, Any]]
     research_model: bool = False
 
+class MessageLogRequest(BaseModel):
+    model: str
+    messages: List[Dict[str, Any]]
+    research_model: bool = False
+
 class MessageLogInDB(BaseModel):
     id: Optional[int] = None
     username: str
